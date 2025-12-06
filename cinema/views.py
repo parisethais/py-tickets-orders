@@ -1,5 +1,5 @@
 from rest_framework import viewsets, mixins
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from cinema.models import Genre, Actor, CinemaHall, Movie, MovieSession, Order
 
@@ -91,6 +91,8 @@ class MovieSessionViewSet(viewsets.ModelViewSet):
         if date_str:
             try:
                 date = datetime.strptime(date_str, "%Y-%m-%d").date()
+                date_end = date + timedelta(days=1)
+                queryset.filter(show_time__gte=date, show_time__lt=date_end)
                 queryset = queryset.filter(show_time__date=date)
             except ValueError:
                 pass
