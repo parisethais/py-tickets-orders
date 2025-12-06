@@ -10,6 +10,7 @@ from cinema.models import (
     Ticket,
     Order
 )
+from rest_framework.validators import UniqueTogetherValidator
 
 
 class GenreSerializer(serializers.ModelSerializer):
@@ -113,28 +114,71 @@ class TicketCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Ticket
         fields = ("movie_session", "row", "seat")
+        validators = [
+            UniqueTogetherValidator(
+                queryset=Ticket.objects.all(),
+                fields=("movie_session", "row", "seat")
+            )
+        ]
+
+    def validate(self, attrs):
+        movie_session = attrs["movie_session"]
+        row = attrs["row"]
+        seat = attrs["seat"]
+
+        hall = movie_session.cinema_hall
+
+        errors = {}
+
+        if not (1 <= row <= hall.rows):
+            errors["row"] = (
+                f"Row must be between 1 and {hall.rows} "
+                f"for this cinema hall."
+            )
+
+        if not (1 <= seat <= hall.seats_in_row):
+            errors["seat"] = (
+                f"Seat must be between 1 and {hall.seats_in_row} "
+                f"for this cinema hall."
+            )
+
+        if errors:
+            raise serializers.ValidationError(errors)
+
+        return attrs
 
 
-class OrderSerializer(serializers.ModelSerializer):
+class OrderListSerializer(serializers.ModelSerializer):
     tickets = TicketSerializer(many=True, read_only=True)
 
     class Meta:
         model = Order
         fields = ("id", "tickets", "created_at")
+        read_only_fields = ("id", "created_at",)
 
 
 class OrderCreateSerializer(serializers.ModelSerializer):
-    tickets = TicketCreateSerializer(many=True)
+    tickets = TicketCreateSerializer(many=True, write_only=True)
 
     class Meta:
         model = Order
-        fields = ("id", "tickets", "created_at")
-        read_only_fields = ("id", "created_at")
+        fields = ("id", "tickets")
+        read_only_fields = ("id",)
 
     def create(self, validated_data):
+        request = self.context.get("request")
+        user = getattr(request, "user", None) if request else None
+
+        if not user or user.is_anonymous:
+            raise serializers.ValidationError(
+                "User must be authenticated to create an order."
+            )
+
+        tickets_data = validated_data.pop("tickets")
+
         with transaction.atomic():
-            tickets_data = validated_data.pop("tickets")
-            order = Order.objects.create(**validated_data)
+            order = Order.objects.create(user=user, **validated_data)
             for ticket_data in tickets_data:
                 Ticket.objects.create(order=order, **ticket_data)
-            return order
+
+        return order
